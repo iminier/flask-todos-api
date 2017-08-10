@@ -3,7 +3,7 @@ from dbData import *
 from flask import Flask, request, jsonify, make_response
 from flask_pymongo import PyMongo
 from werkzeug.security import generate_password_hash, check_password_hash
-from functools impoer wraps
+from functools import wraps
 import uuid
 import jwt
 import datetime
@@ -28,7 +28,7 @@ def token_required(f):
 		if not token:
 			return jsonify({'message' : 'Token is missing!'}), 401
 
-		try
+		try:
 			data = jwt.decode(token, app.config['SECRET_KEY']
 			current_user = User.query.filer_by(public_id = data['public_id']).first()
 		except:
