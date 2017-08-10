@@ -1,4 +1,5 @@
-from credentials import *
+from keyData import *
+from dbData import *
 from flask import Flask, request, jsonify, make_response
 from flask_pymongo import PyMongo
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -187,3 +188,52 @@ def get_one_todo(current_user, todo_id):
 	return jsonify(todo_data)
 
 
+@app.route('/todo', methods = ['POST'])
+@token_required
+def create_todo(current_user):
+	data = request.get_json()
+
+	new_todo = {}
+	new_todo['text'] = data['text']
+	new_todo['user_id'] = current_user.id
+	new_todo['complete'] = False
+
+	#
+	db.add(new_todo)
+
+	return jsonify({'message' : 'Todo created!'})
+
+
+@app.route('/todo/<todo_id>', methods = ['PUT'])
+@token_required
+def complete_todo(current_user, todo_id):
+	#
+	todo = db.query.filter_by(id = todo_id, user_id = current_user.id).first()
+
+	if not todo:
+		return jsonify({'message' : 'No todo found!'})
+
+	todo.complete = True
+	#
+	db.save()
+
+	return jsonify({'message' : 'Todo item has been marked completed!'})
+
+
+@app.route('/todo/<todo_id>', methods = ['DELETE'])
+@token_required
+def delete_todo(current_user, todo_id):
+	#
+	todo = db.query.filter_by(id = todo_id, user_id = current_user.id).first()
+
+	if not todo:
+		return jsonify({'message' : 'No todo found!'})
+
+	db.delete(todo)
+	
+	return jsonify({'message' : 'Todo item deleted!'})
+
+
+if __name__ == '__main__':
+	app.debug = True
+	app.run(host = '0.0.0.0')
