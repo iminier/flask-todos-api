@@ -1,6 +1,7 @@
 from pymongo import MongoClient
+from dbData import *
 
-client = MongoClient('mongodb://testing:1000Pass@ds111851.mlab.com:11851/crtestdb')
+client = MongoClient(dbURI)
 db = client.crtestdb
 
 def main():

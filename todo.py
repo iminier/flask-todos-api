@@ -4,13 +4,10 @@ from flask import Flask, request, jsonify, make_response
 from flask_pymongo import PyMongo
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+from bson.objectid import ObjectId
 import uuid
 import jwt
 import datetime
-from bson.objectid import ObjectId
-
-import sys
-
 
 app = Flask(__name__)
 
@@ -86,7 +83,6 @@ def login():
 @app.route('/user', methods = ['GET'])
 @token_required
 def get_all_users(current_user):
-    ##print(current_user, file=sys.stderr)
     if not current_user['admin']:
         return jsonify({'message' : 'Cannot perform that function!'})
 
@@ -111,8 +107,6 @@ def get_one_user(current_user, unique_id):
     if not current_user['admin']:
         return jsonify({'message' : 'Cannot perform function'}) 
     #### 
-##    print(unique_id, file=sys.stderr)
-
     user = mgdb.db.users.find_one({'_id' : ObjectId(str(unique_id))})
 
     if not user:
@@ -234,7 +228,6 @@ def get_one_todo(current_user, todo_id):
     ####
     todo = mgdb.db.todos.find_one({'todo_id' : str(todo_id)})
 
-    print(todo, file=sys.stderr)
     if not todo:
         return jsonify({'message' : 'No todo found!'})
 

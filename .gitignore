@@ -1,3 +1,5 @@
+.DS_Store
+virtualenv/
 *.pyc
 dbData.py
 keyData.py
