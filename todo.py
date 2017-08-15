@@ -7,14 +7,18 @@ from functools import wraps
 import uuid
 import jwt
 import datetime
+from bson.objectid import ObjectId
+
+import sys
 
 
 app = Flask(__name__)
 
 app.config['SECRET_KEY'] = secretoKey
+app.config['MONGO_DBNAME'] = dbname
 app.config['MONGO_URI'] = dbURI
 
-db = PyMongo(app)
+mgdb = PyMongo(app)
 
 
 def token_required(f):
@@ -30,63 +34,22 @@ def token_required(f):
 
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'])
-            current_user = db.mongo.users.find({'public_id' : data['public_id']})
+            current_user = mgdb.db.users.find_one({'_id' : ObjectId(str(data['unique_id']))})
 
         except:
-            return jsonify({'message' : 'Token is invalid'}), 401
-    
+            return jsonify({'message' : 'Token is invalid 100'}), 401
+        
         return f(current_user, *args, **kwargs)
     
     return decorated
 
 
-@app.route('/user', methods = ['GET'])
-@token_required
-def get_all_users(current_user):
-    if not current_user.admin:
-        return jsonify({'message' : 'Cannot perform that function!'})
-    ####
-    users = db.mongo.users.find()
-    
-    output = []
-
-    for users in users:
-        user_data = {}
-        user_data['unique_id'] = user._id
-        user_data['name'] = user.name
-        user_data['password'] = user.password
-        user_data['admin'] = user.admin
-        
-        output.append(user_data)
-    
-    jsonify({'users' : output })
-
-
-@app.route('/user/<unique_id>', methods = ['GET'])
-@token_required
-def get_one_user(current_user, unique_id):
-    if not current_user.admin:
-        return jsonify({'message' : 'Cannot perform function'}) 
-    #### 
-    user = db.users.find_one({'_id' : unique_id})
-
-    if not user:
-        return jsonify({'message' : 'No user found!'})
-
-    user_data = {}
-    user_data['unique_id'] = user._id
-    user_data['name'] = user.name
-    user_data['password'] = user.password
-    user_data['admin'] = user.admin
-
-    return jsonify({'user' : user_data})
-
+##
+# ROUTES
+##
 
 @app.route('/user', methods = ['POST'])
-@token_required
-def create_user(current_user):
-    if not current_user.admin:
-        return jsonify({'message' : 'Cannot perform that function!'})
+def create_user():
     
     data = request.get_json()
 
@@ -94,88 +57,172 @@ def create_user(current_user):
 
     new_user = {'name' : data['name'], 'password' : hashed_password, 'admin' : False}
     ####
-    db.mongo.users.insert(new_user)
+    mgdb.db.users.insert(new_user)
 
     return jsonify({'message' : 'New user created!'})
 
 
-@app.route('/user/<public_id>', methods = ['PUT'])
+@app.route('/login')
+def login():
+    auth = request.authorization
+    
+    if not auth or not auth.username or not auth.password:
+        return make_response('Could not verify', 401, {'WWW-Authenticate' : 'Basic realm = "Login required!"'})
+
+    user = mgdb.db.users.find_one({'name' : auth.username})
+
+    if not user:
+        return make_response('Could not verify', 401, {'WWW-Authenticate' : 'Basic realm = "Login required!"'})
+    
+    if check_password_hash(user['password'], auth.password):
+        token = jwt.encode({'unique_id' : str(user['_id']), 
+                            'exp' : datetime.datetime.utcnow() + datetime.timedelta(minutes = 30)}, 
+                            app.config['SECRET_KEY'])
+        return jsonify({'token' : token.decode('UTF-8')})
+    
+    return make_response('Could not verify', 401, {'WWW-Authenticate' : 'Basic realm = "Login required!"'})
+
+
+@app.route('/user', methods = ['GET'])
 @token_required
-def promote_user(current_user, unique_id):
-    if not current_user.admin:
+def get_all_users(current_user):
+    ##print(current_user, file=sys.stderr)
+    if not current_user['admin']:
         return jsonify({'message' : 'Cannot perform that function!'})
 
-    user = db.mongo.users.find({"_id" : unique_id})
+    users = mgdb.db.users.find()
+    
+    output = []
+
+    for user in users:
+        user_data = {}
+        user_data['unique_id'] = str(user['_id'])
+        user_data['name'] = str(user['name'])
+        user_data['admin'] = str(user['admin'])
+        
+        output.append(user_data)
+    
+    return jsonify({'users' : output })
+
+
+@app.route('/user/<unique_id>', methods = ['GET'])
+@token_required
+def get_one_user(current_user, unique_id):
+    if not current_user['admin']:
+        return jsonify({'message' : 'Cannot perform function'}) 
+    #### 
+##    print(unique_id, file=sys.stderr)
+
+    user = mgdb.db.users.find_one({'_id' : ObjectId(str(unique_id))})
 
     if not user:
         return jsonify({'message' : 'No user found!'})
+
+    if 'admin' not in user:
+        user['admin'] = False
+        mgdb.db.users.update_one({
+            '_id' : user['_id']
+            },{
+                '$set' : {
+                    'admin' : user['admin'] 
+                }
+            }, upsert = False)
+
+    user_data = {}
+    user_data['unique_id'] = str(user['_id'])
+    user_data['name'] = user['name']
+    user_data['admin'] = str(user['admin'])
+
+    return jsonify({'user' : user_data})
+
+
+@app.route('/user/makeAdmin/<unique_id>', methods = ['PUT'])
+@token_required
+def promote_user(current_user, unique_id):
+    if not current_user['admin']:
+        return jsonify({'message' : 'Cannot perform that function!'})
+
+    user = mgdb.db.users.find_one({'_id' : ObjectId(str(unique_id))})
+
+    if not user:
+        return jsonify({'message' : 'No user found!'})
+
+    if 'admin' not in user:
+        user['admin'] = False
+        mgdb.db.users.update_one({
+            '_id' : user['_id']
+            },{
+                '$set' : {
+                    'admin' : user['admin'] 
+                }
+            }, upsert = False)
     
-    user.admin = True
+    user['admin'] = True
     
-    ####
-    db.mongo.users.update_one({
-        '_id' : user._id
+    mgdb.db.users.update_one({
+        '_id' : user['_id']
         },{
             '$set' : {
-                'admin' : user.admin
+                'admin' : user['admin']
             }
     }, upsert=False) 
 
     return jsonify({'message' : 'User has been promoted'})
 
 
-@app.route('/user/<unique_id>', methods = ['DELETE'])
+@app.route('/user/delete/<unique_id>', methods = ['DELETE'])
 @token_required
 def delete_user(current_user, unique_id):
-    if not current_user.admin:
+    if not current_user['admin']:
         return jsonify({'message' : 'Cannot perform that function!'})
 
     ####
-    user = db.mongo.users.find({'_id' : unique_id})
+    user = mgdb.db.users.find_one({'_id' : ObjectId(str(unique_id))})
 
     if not user:
         return jsonify({'message' : 'No user found'})
 
     ####
-    db.mongo.users.DeleteOne({'_id' : unique_id})
+    mgdb.db.users.remove({'_id' : ObjectId(str(unique_id))})
 
     return jsonify({'message' : 'The user has been deleted!'})
 
 
-@app.route('/login')
-def login():
-    auth = request.authorization
+####
+## Todo Methods
+####
 
-    if not auth or not auth.username or not auth.password:
-        return make_response('Could not verify', 401, {'WWW-Authenticate' : 'Basic realm = "Login required!"'})
 
-    ####
-    user = db.mongo.users.find({'name' : auth.username})
+@app.route('/todo', methods = ['POST'])
+@token_required
+def create_todo(current_user):
+    data = request.get_json()
 
-    if not user:
-        return make_response('Could not verify', 401, {'WWW-Authenticate' : 'Basic realm = "Login required!"'})
+    new_todo = {}
+    new_todo['todo_id'] = str(uuid.uuid4())
+    new_todo['text'] = data['text']
+    new_todo['user_id'] = current_user['_id']
+    new_todo['complete'] = False
+    
+    mgdb.db.todos.insert(new_todo)
 
-    if check_password_hash(user.password, auth.password):
-        token = jwt.encode({'unique_id' : user._id, 'exp' : datetime.datetime.utcnow() + datetime.timedelta(minutes = 30)}, app.config['SECRET_KEY'])
-        return jsonify({'token' : token.decode('UTF-8')})
+    
 
-    return make_response('Could not verify', 401, {'WWW-Authenticate' : 'Basic realm = "Login required!"'})
+    return jsonify({'message' : 'Todo created!'})
 
 
 @app.route('/todo', methods = ['GET'])
 @token_required
 def get_all_todos(current_user):
-    ####
-    user = db.mongo.users.find({'name' : current_user})
-    todos = user.todos    
+    todos = mgdb.db.todos.find({'user_id' : ObjectId(str(current_user['_id']))})  
 
     output = []
 
     for todo in todos:
         todo_data = {}
-        todo_data['id'] = todo.id
-        todo_data['text'] = todo.text
-        todo_data['complete'] = todo.complete
+        todo_data['todo_id'] = todo['todo_id']
+        todo_data['text'] = todo['text']
+        todo_data['complete'] = todo['complete']
         output.append(todo_data)
 
     return jsonify({'todos' : output})
@@ -185,70 +232,50 @@ def get_all_todos(current_user):
 @token_required
 def get_one_todo(current_user, todo_id):
     ####
-    todo = db.mongo.users.find({current_user.todo_id})
+    todo = mgdb.db.todos.find_one({'todo_id' : str(todo_id)})
 
+    print(todo, file=sys.stderr)
     if not todo:
-        return jsonify({'message' : 'No todo founds!'})
+        return jsonify({'message' : 'No todo found!'})
 
     todo_data = {}
-    todo_data['id'] = todo.id
-    todo_data['text'] = todo.text
-    todo_data['complete'] = todo.complete
+    todo_data['todo_id'] = todo['todo_id']
+    todo_data['text'] = todo['text']
+    todo_data['complete'] = todo['complete']
 
     return jsonify(todo_data)
 
 
-@app.route('/todo', methods = ['POST'])
-@token_required
-def create_todo(current_user):
-    data = request.get_json()
-
-    new_todo = {}
-    new_todo['text'] = data['text']
-    new_todo['user_id'] = current_user.id
-    new_todo['complete'] = False
-    
-    user = db.mongo.users.find_one({'name' : current_user})
-    ####
-    db.mongo.users.update_one({
-        '_id' : user._id
-        },{
-            '$set' : {'todos' : [new_todo]}
-        }) 
-
-    return jsonify({'message' : 'Todo created!'})
-
-
-@app.route('/todo/<todo_id>', methods = ['PUT'])
+@app.route('/todo/markComplete/<todo_id>', methods = ['PUT'])
 @token_required
 def complete_todo(current_user, todo_id):
     #
-#    user = db.mongo.users.find({'name' : current_user})
-#    todo = user.todo_id
+    todo = mgdb.db.todos.find_one({'todo_id' : str(todo_id)})
 
-#    if not todo:
-#        return jsonify({'message' : 'No todo found!'})
+    if not todo:
+        return jsonify({'message' : 'No todo found!'})
 
-#    todo.complete = True
-    #
-#    db.mongo.users.update({
-#        '_id' : current_user._id
-#        },{
-#            '$set' : {'todos.content' :  
+    todo['complete'] = True
+    
+    mgdb.db.todos.update_one({
+        'todo_id' : str(todo_id)
+        },{
+            '$set' : {'complete' : todo['complete']}
+        }, upsert = False) 
 
     return jsonify({'message' : 'Todo item has been marked completed!'})
 
 
-@app.route('/todo/<todo_id>', methods = ['DELETE'])
+@app.route('/todo/delete/<todo_id>', methods = ['DELETE'])
 @token_required
 def delete_todo(current_user, todo_id):
-    #
-#    todo = db.query.filter_by(id = todo_id, user_id = current_user.id).first()
 
- #   if not todo:
-  #      return jsonify({'message' : 'No todo found!'})
+    todo = mgdb.db.todos.find_one({'todo_id' : str(todo_id)})
 
-   # db.delete(todo)
+    if not todo:
+        return jsonify({'message' : 'No todo found'})
+
+    mgdb.db.todos.remove({'todo_id' : str(todo_id)})
     
     return jsonify({'message' : 'Todo item deleted!'})
 
